@@ -906,6 +906,69 @@ h3 {
   border-top: 1px solid var(--line);
   margin: 20px 0;
 }
+.diagram-card {
+  position: relative;
+  margin: 14px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.diagram-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px #17372b12;
+  color: var(--muted);
+  font-size: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.diagram-card:hover > .diagram-toolbar,
+.diagram-card:focus-within > .diagram-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .diagram-card > .diagram-toolbar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.diagram-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px;
+  width: 32px;
+  height: 32px;
+  color: var(--green);
+  white-space: nowrap;
+}
+.diagram-export-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 6px 10px;
+  color: var(--muted);
+  background: var(--nav);
+  font-size: 10px;
+}
+.diagram-export-status svg {
+  margin-top: 3px;
+}
+.diagram-export-status.export-error {
+  color: #b24e3b;
+}
 .diagram {
   overflow: auto;
   background: #fff;
