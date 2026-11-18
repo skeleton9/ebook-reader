@@ -1259,17 +1259,19 @@ export default function App() {
           <div className="ai-tabs">
             <button
               className={tab === "summary" ? "active" : ""}
+              aria-pressed={tab === "summary"}
               onClick={() => setTab("summary")}
             >
               <FileText size={15} />
-              章节总结
+              章节总结{tab === "summary" && <i aria-hidden="true" />}
             </button>
             <button
               className={tab === "chat" ? "active" : ""}
+              aria-pressed={tab === "chat"}
               onClick={() => setTab("chat")}
             >
               <MessageSquare size={15} />
-              阅读对话{ai.messages.length > 0 && <i />}
+              阅读对话{tab === "chat" && <i aria-hidden="true" />}
             </button>
           </div>
           <div className="context-line">
