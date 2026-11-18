@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   BookOpen,
   Library,
@@ -29,19 +35,26 @@ import {
   FileText,
   Menu,
   LoaderCircle,
+  Volume2,
+  Play,
 } from "lucide-react";
 import { storage } from "./db";
 import { parseEpub } from "./epub";
 import { demo } from "./demo";
 import { generate } from "./stream";
 import { Markdown } from "./Markdown";
+import { SpeechPlayer } from "./SpeechPlayer";
+import { useSpeechReader } from "./useSpeechReader";
+import { defaultSpeechConfig } from "./speechConfig";
+import { bodySpeechPlan, segmentAtOffset, markdownSpeechText } from "./speech";
+import { useSpeechHighlight } from "./useSpeechHighlight";
 import { usePanelResize } from "./usePanelResize";
 import {
   readingFonts,
   readingBackgrounds,
   readingColors,
 } from "./readingPreferences";
-import type { AIConfig, Book, ChapterAI, Note } from "./types";
+import type { AIConfig, Book, ChapterAI, Note, SpeechConfig } from "./types";
 
 const uid = () => crypto.randomUUID();
 const shortTitle = (title: string) => {
@@ -92,6 +105,9 @@ export default function App() {
     key: "",
   }));
   const [serverConfigured, setServerConfigured] = useState(false);
+  const [ttsConfigured, setTTSConfigured] = useState(false);
+  const [speechDraft, setSpeechDraft] =
+    useState<SpeechConfig>(defaultSpeechConfig);
   const [fontSize, setFontSize] = useState(readSetting("font-size", 18));
   const [readingFont, setReadingFont] = useState(
     readSetting("reading-font", "serif"),
@@ -159,6 +175,11 @@ export default function App() {
     (n) => n.bookId === book?.id && n.chapterId === chapter?.id,
   );
   const currentAIId = book && chapter ? `${book.id}:${chapter.id}` : "";
+  const speech = useSpeechReader(currentAIId);
+  const bodyPlan = useMemo(
+    () => (chapter ? bodySpeechPlan(chapter.html) : []),
+    [chapter],
+  );
   const notify = useCallback((s: string) => setToast(s), []);
   useEffect(() => {
     (async () => {
@@ -181,6 +202,8 @@ export default function App() {
       .then((r) => r.json())
       .then((d) => {
         setServerConfigured(d.configured);
+        setTTSConfigured(Boolean(d.ttsConfigured));
+        if (d.ttsConfig) speech.loadDefaults(d.ttsConfig);
         if (!localStorage.getItem("ai-config"))
           setConfig((c) => ({ ...c, base: d.base, model: d.model }));
       })
@@ -269,6 +292,7 @@ export default function App() {
       node.replaceWith(frag);
     }
   }, [chapter, notes]);
+  useSpeechHighlight(article, scrollArea, speech, notes);
   useEffect(() => {
     if (!loaded || !book || !scrollArea.current) return;
     scrollArea.current.scrollTop = book.scroll || 0;
@@ -674,7 +698,7 @@ export default function App() {
     );
   return (
     <div
-      className={`app ${panel ? "with-ai" : ""} ${panelResize.resizing ? "resizing-panel" : ""}`}
+      className={`app ${panel ? "with-ai" : ""} ${panelResize.resizing ? "resizing-panel" : ""} ${speech.open ? "speech-open" : ""}`}
       style={
         { "--ai-panel-width": `${panelResize.width}px` } as React.CSSProperties
       }
@@ -687,12 +711,13 @@ export default function App() {
         hidden
         onChange={(e) => void importFiles(e.target.files)}
       />
-      <header className="topbar">
+      <header className={`topbar ${speech.open ? "has-speech" : ""}`}>
         <div className="brand">
           <BookOpen size={25} strokeWidth={1.7} />
           <strong>页间</strong>
           <span>让阅读发生更多</span>
         </div>
+        <SpeechPlayer speech={speech} />
         <div className="top-actions">
           <span className="local-status">
             <span />
@@ -706,9 +731,10 @@ export default function App() {
             <Library size={16} />
             我的书架 <span className="count">{books.length}</span>
           </button>
-          {iconButton("AI 设置", <Settings size={18} />, () =>
-            setSettings(true),
-          )}
+          {iconButton("AI 与语音设置", <Settings size={18} />, () => {
+            setSpeechDraft({ ...speech.config });
+            setSettings(true);
+          })}
         </div>
       </header>
       <aside className={`navigation ${mobileNav ? "mobile-open" : ""}`}>
@@ -891,6 +917,18 @@ export default function App() {
             </b>
           </div>
           <div className="reader-tools">
+            <button
+              className="icon-button"
+              aria-label="朗读本章正文"
+              title="朗读本章正文"
+              disabled={!chapter}
+              onClick={() =>
+                chapter &&
+                void speech.readBody(bodyPlan, `正文 · ${chapter.title}`)
+              }
+            >
+              <Volume2 size={18} />
+            </button>
             <div className="appearance-wrap" ref={appearanceRef}>
               {iconButton(
                 "阅读排版",
@@ -900,6 +938,17 @@ export default function App() {
               {appearance && (
                 <div className="appearance popover">
                   <strong>阅读偏好</strong>
+                  <label className="reading-font-setting">
+                    <span>朗读音色</span>
+                    <select
+                      aria-label="偏好朗读音色"
+                      value={speech.voice}
+                      onChange={(e) => speech.setVoice(e.target.value)}
+                    >
+                      <option value="female">女声</option>
+                      <option value="male">男声</option>
+                    </select>
+                  </label>
                   <label className="reading-font-setting">
                     <span>正文字体</span>
                     <select
@@ -1022,6 +1071,28 @@ export default function App() {
         </div>
         <section
           className="reader-scroll"
+          tabIndex={0}
+          aria-label="正文阅读区域"
+          onKeyDown={(event) => {
+            if (
+              [
+                "PageUp",
+                "PageDown",
+                "Home",
+                "End",
+                "ArrowUp",
+                "ArrowDown",
+              ].includes(event.key) &&
+              speech.state.kind === "body"
+            )
+              speech.setFollow(false);
+          }}
+          onWheel={() => {
+            if (speech.state.kind === "body") speech.setFollow(false);
+          }}
+          onTouchMove={() => {
+            if (speech.state.kind === "body") speech.setFollow(false);
+          }}
           style={readingColors(activeBackground) as React.CSSProperties}
           ref={scrollArea}
           onScroll={(e) => {
@@ -1137,6 +1208,29 @@ export default function App() {
             <button onClick={askQuote}>
               <Sparkles size={15} />问 AI
             </button>
+            <button
+              onClick={() => {
+                void speech.read(selection.quote, "选中文本");
+                setSelection(null);
+              }}
+            >
+              <Volume2 size={15} />
+              朗读
+            </button>
+            <button
+              onClick={() => {
+                void speech.readBody(
+                  bodyPlan,
+                  `正文 · ${chapter?.title || "当前章节"}`,
+                  segmentAtOffset(bodyPlan, selection.start),
+                );
+                setSelection(null);
+                window.getSelection()?.removeAllRanges();
+              }}
+            >
+              <Play size={15} />
+              从这里读
+            </button>
             {iconButton("取消选择", <X size={15} />, () => setSelection(null))}
           </div>
         )}
@@ -1225,6 +1319,18 @@ export default function App() {
                     />
                     {busy !== "summary" && (
                       <div className="result-actions">
+                        <button
+                          aria-label="朗读 AI 总结"
+                          onClick={() =>
+                            void speech.read(
+                              markdownSpeechText(summary.content),
+                              `总结 · ${chapter?.title || "当前章节"}`,
+                            )
+                          }
+                        >
+                          <Volume2 size={14} />
+                          朗读
+                        </button>
                         <button onClick={() => void copy(summary.content)}>
                           <Copy size={14} />
                           复制
@@ -1341,13 +1447,38 @@ export default function App() {
                           }
                         />
                         {m.content && (
-                          <button
-                            className="copy-message"
-                            onClick={() => void copy(m.content)}
-                          >
-                            <Copy size={12} />
-                            复制
-                          </button>
+                          <div className="message-actions">
+                            <button
+                              className="copy-message"
+                              onClick={() => void copy(m.content)}
+                            >
+                              <Copy size={12} />
+                              复制
+                            </button>
+                            {!(
+                              busy === "chat" && m.id === ai.messages.at(-1)?.id
+                            ) && (
+                              <button
+                                className="copy-message"
+                                aria-label={
+                                  m.role === "assistant"
+                                    ? "朗读 AI 回复"
+                                    : "朗读提问"
+                                }
+                                onClick={() =>
+                                  void speech.read(
+                                    markdownSpeechText(m.content),
+                                    m.role === "assistant"
+                                      ? "AI 回复"
+                                      : "我的提问",
+                                  )
+                                }
+                              >
+                                <Volume2 size={12} />
+                                朗读
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}
@@ -1607,21 +1738,20 @@ export default function App() {
             className="modal settings-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="AI 设置"
+            aria-label="AI 与语音设置"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-title">
               <h2>
                 <Sparkles size={21} />
-                连接你的 AI
+                AI 与语音配置
               </h2>
               {iconButton("关闭设置", <X size={20} />, () =>
                 setSettings(false),
               )}
             </div>
             <p className="settings-description">
-              支持 OpenAI
-              兼容接口。章节或选文会在你发起请求时发送至所配置的服务。
+              配置文本生成与豆包语音。章节或选文仅在总结、对话或朗读时发送至对应服务。
             </p>
             <form
               onSubmit={(e) => {
@@ -1630,57 +1760,150 @@ export default function App() {
                   "ai-config",
                   JSON.stringify({ base: config.base, model: config.model }),
                 );
+                speech.configure(speechDraft);
                 setSettings(false);
-                notify("AI 设置已保存，密钥仅保留在本次页面会话");
+                notify("AI 与语音设置已保存，当前朗读将使用新配置");
               }}
             >
-              <label>
-                接口地址
-                <input
-                  type="url"
-                  required
-                  value={config.base}
-                  placeholder="https://api.openai.com/v1"
-                  onChange={(e) =>
-                    setConfig({ ...config, base: e.target.value })
-                  }
-                />
-                <small>填写基础地址，系统会追加 /chat/completions</small>
-              </label>
-              <label>
-                模型名称
-                <input
-                  required
-                  value={config.model}
-                  onChange={(e) =>
-                    setConfig({ ...config, model: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                API Key
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={config.key}
-                  placeholder={
-                    serverConfigured ? "已配置服务端密钥，可留空" : "sk-…"
-                  }
-                  onChange={(e) =>
-                    setConfig({ ...config, key: e.target.value })
-                  }
-                />
-                <small>
-                  密钥仅保留在内存，刷新后需要重新填写。也可通过服务端 .env
-                  配置。
-                </small>
-              </label>
-              <div className="settings-status">
-                <span className="status-dot" />
-                {serverConfigured
-                  ? "服务端已配置密钥"
-                  : "使用你自己的 AI 服务账号与额度"}
-              </div>
+              <fieldset className="settings-section">
+                <legend>文本模型</legend>
+                <label>
+                  接口地址
+                  <input
+                    type="url"
+                    required
+                    value={config.base}
+                    placeholder="https://api.openai.com/v1"
+                    onChange={(e) =>
+                      setConfig({ ...config, base: e.target.value })
+                    }
+                  />
+                  <small>填写基础地址，系统会追加 /chat/completions</small>
+                </label>
+                <label>
+                  模型名称
+                  <input
+                    required
+                    value={config.model}
+                    onChange={(e) =>
+                      setConfig({ ...config, model: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  API Key
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={config.key}
+                    placeholder={
+                      serverConfigured ? "已配置服务端密钥，可留空" : "sk-…"
+                    }
+                    onChange={(e) =>
+                      setConfig({ ...config, key: e.target.value })
+                    }
+                  />
+                  <small>
+                    密钥仅保留在内存，刷新后需要重新填写。也可通过服务端 .env
+                    配置。
+                  </small>
+                </label>
+                <div className="settings-status">
+                  <span className="status-dot" />
+                  {serverConfigured
+                    ? "服务端已配置密钥"
+                    : "使用你自己的 AI 服务账号与额度"}
+                </div>
+              </fieldset>
+              <fieldset className="settings-section">
+                <legend>语音朗读</legend>
+                <label>
+                  语音接口 URL
+                  <input
+                    type="url"
+                    required
+                    value={speechDraft.url}
+                    maxLength={2048}
+                    placeholder="https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) =>
+                      setSpeechDraft({ ...speechDraft, url: e.target.value })
+                    }
+                  />
+                  <small>
+                    填写豆包 HTTP
+                    单向流式接口的完整地址。更换域名时，请同步修改服务端地址和密钥。
+                  </small>
+                </label>
+                <label>
+                  语音模型（资源 ID）
+                  <input
+                    required
+                    value={speechDraft.resource}
+                    placeholder="seed-tts-2.0"
+                    maxLength={160}
+                    pattern="[A-Za-z0-9_.:\-]+"
+                    onChange={(e) =>
+                      setSpeechDraft({
+                        ...speechDraft,
+                        resource: e.target.value,
+                      })
+                    }
+                  />
+                  <small>例如 seed-tts-2.0；模型与音色需匹配。</small>
+                </label>
+                <label>
+                  女声音色 ID
+                  <input
+                    required
+                    value={speechDraft.femaleVoice}
+                    placeholder="zh_female_vv_uranus_bigtts"
+                    maxLength={160}
+                    pattern="[A-Za-z0-9_.:\-]+"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) =>
+                      setSpeechDraft({
+                        ...speechDraft,
+                        femaleVoice: e.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  男声音色 ID
+                  <input
+                    required
+                    value={speechDraft.maleVoice}
+                    placeholder="zh_male_m191_uranus_bigtts"
+                    maxLength={160}
+                    pattern="[A-Za-z0-9_.:\-]+"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) =>
+                      setSpeechDraft({
+                        ...speechDraft,
+                        maleVoice: e.target.value,
+                      })
+                    }
+                  />
+                  <small>
+                    播放条中的“女声”“男声”分别使用以上
+                    ID。保存后从当前句应用新配置，暂停状态保持。
+                  </small>
+                </label>
+                <div className="settings-status">
+                  <span className="status-dot" />
+                  {ttsConfigured
+                    ? "语音密钥已在服务端配置"
+                    : "请在服务端 .env 配置 DOUBAO_TTS_API_KEY"}
+                </div>
+                <p className="settings-hint">
+                  默认值读取服务端
+                  .env；页面修改保存在当前浏览器，语音密钥由服务端保管。
+                </p>
+              </fieldset>
               <button className="primary" type="submit">
                 <Check size={16} />
                 保存设置

@@ -421,6 +421,11 @@ h3 {
   gap: 11px;
   align-items: center;
 }
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 .type-icon {
   font-family: Georgia, serif;
   font-size: 18px;
@@ -1168,6 +1173,9 @@ h3 {
   margin-top: 18px;
 }
 .selection-toolbar {
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
   position: absolute;
   bottom: 55px;
   left: 50%;
@@ -1556,12 +1564,52 @@ h3 {
   color: var(--muted);
   line-height: 1.9;
 }
-.modal form > label {
+.modal form > label,
+.settings-section > label {
   display: flex;
   flex-direction: column;
   gap: 9px;
   font-size: 12px;
   margin: 21px 0;
+}
+.settings-section {
+  min-width: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  padding: 0;
+  margin: 24px 0;
+}
+.settings-modal {
+  width: min(100%, 860px);
+}
+.settings-modal form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 30px;
+}
+.settings-modal form > .primary {
+  grid-column: 1 / -1;
+}
+.settings-section > label {
+  margin: 18px 0;
+  gap: 7px;
+}
+@media (max-width: 640px) {
+  .settings-modal form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.settings-section legend {
+  padding: 0 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.settings-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 0;
 }
 .modal label small {
   font-size: 10px;

@@ -49,3 +49,9 @@ export interface AIConfig {
   model: string;
   key: string;
 }
+export interface SpeechConfig {
+  url: string;
+  resource: string;
+  femaleVoice: string;
+  maleVoice: string;
+}
